@@ -22,6 +22,10 @@ class UbeePlayApp(hass.Hass):
             url = self.get_state("input_text.ubee_evw32c_url")
             login_info = LoginInfo(username=username, password=password, url=url)
 
+            self.log(f"Received username: {username}")
+            self.log(f"Received password: {password}")
+            self.log(f"Received URL: {url}")
+
             response = requests.post("http://192.168.160.2:5000/run_system_info_reader/", json=login_info.dict())
 
             # Check the status code of the response
