@@ -17,7 +17,8 @@ class LoginInfo(BaseModel):
     url: str
 
 @router.post("/run_system_info_reader/")
-async def run_playwright(username: str, password: str, url: str):
+async  def  run_playwright(login_info:  LoginInfo):
+
     try:
         async with async_playwright() as p:
             browser = await p.chromium.launch()
