@@ -2,7 +2,7 @@
 from playwright.async_api import async_playwright
 import logging
 
-from ubee_evw_system_info_reader import LoginException
+from exceptions import LoginException
 
 async def perform_ubee_evw_login(username: str, password: str, url: str):
     try:

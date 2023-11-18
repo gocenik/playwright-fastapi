@@ -1,8 +1,8 @@
 # ubee_evw_system_info_reader.py
 from fastapi import APIRouter
 from models import UbeeEVWLoginInfo
-from ubee_evw_login_manager import perform_ubee_evw_login
 from models import UbeeEVWLoginInfo
+from exceptions import LoginException
 
 router = APIRouter()
 
