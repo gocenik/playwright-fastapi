@@ -8,4 +8,5 @@ services:
       - /home/ubuntu/docker/playwright-fastapi/apps:/apps
     ports:
       - "5000:5000"
+      - "28000:8000"
     restart: unless-stopped

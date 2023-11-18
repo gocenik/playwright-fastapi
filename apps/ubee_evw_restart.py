@@ -1,13 +1,6 @@
-import logging
-from fastapi import FastAPI
-from pydantic import BaseModel
-import asyncio
-from playwright.async_api import async_playwright
 from fastapi import APIRouter
-from fastapi.responses import JSONResponse
-
-# Set up logging
-logging.basicConfig(level=logging.DEBUG)
+from pydantic import BaseModel
+from playwright.async_api import async_playwright
 
 router = APIRouter()
 
@@ -16,31 +9,26 @@ class LoginInfo(BaseModel):
     password: str
     url: str
 
-@router.post("/run_system_info_reader/")
-async  def  run_playwright(login_info:  LoginInfo):
-
+async def run_playwright(username: str, password: str, url: str):
     try:
         async with async_playwright() as p:
-            browser = await p.chromium.launch()
+            browser = await p.webkit.launch(headless=True)
             page = await browser.new_page()
             await page.goto(url)
 
-            # Check if the specific fields are visible
-            if await page.is_visible("input[name=\"c_UserId\"]"):
-                # Fill in the first form if present
-                await page.fill("input[name=\"c_UserId\"]", username)
-                await page.fill("input[name=\"c_Password\"]", password)
-                await page.fill("input[name=\"c_PasswordReEnter\"]", password)
-                await page.click("text=Apply")
-                # Wait for the page to reload
-                await page.wait_for_load_state("networkidle")
-
-            # Fill in the login form
-            await page.fill("input[name=\"loginUsername\"]", username)
-            await page.fill("input[name=\"loginPassword\"]", password)
-            await page.click("text=Login")
-            # Wait for the page to load after login
-            await page.wait_for_load_state("networkidle")
+            # Check if device was reseted
+            await page.goto(url)
+            if await page.locator("input[name=\"c_UserId\"]").is_visible():
+                print("Filling the first form")
+                await page.locator("input[name=\"c_UserId\"]").fill(username)
+                await page.locator("input[name=\"c_Password\"]").fill(password)
+                await page.locator("input[name=\"c_PasswordReEnter\"]").fill(password)
+                await page.locator("button:has-text(\"Apply\")").click()  
+                
+            print("Filling the main login form")
+            await page.locator("input[name=\"loginUsername\"]").fill(username)
+            await page.locator("input[name=\"loginPassword\"]").fill(password)
+            await page.locator("input[name=\"loginPassword\"]").press("Enter")  # Or click on the login button if there is one
 
             # Navigate to the system info page
             await page.goto(f"{url}/UbeeSysInfo.asp")
@@ -57,20 +45,18 @@ async  def  run_playwright(login_info:  LoginInfo):
             await browser.close()
             return {
                 # "model": model,
-                "hw_version": hardware_version,
+                "hardware_version": hardware_version,
                 "firmware_version": firmware_version,
                 "boot_version": boot_version,
                 "serial_number": serial_number,
-                "cm_mac_address": mac_address,
+                "mac_address": mac_address,
                 "network_access": network_access
             }
 
     except Exception as e:
-        logging.error(f"An error occurred: {e}")
+        print(f"An error occurred: {e}")
         return {"error": str(e)}
 
-
-@router.post("/run_system_info_reader_with_info/")
-async def cm_system_info_reader(login_info: LoginInfo):
-    logging.info(f"Received data: {login_info.dict()}")  # Debugging
+@router.post("/run_system_info_reader/")
+async def run_system_info_reader(login_info: LoginInfo):
     return await run_playwright(login_info.username, login_info.password, login_info.url)
