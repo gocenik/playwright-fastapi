@@ -1,65 +1,41 @@
-from fastapi import APIRouter
-from pydantic import BaseModel
+import asyncio
 from playwright.async_api import async_playwright
-import logging
 
-logging.basicConfig(level=logging.INFO)
+class UbeeTelephonyInfoReader:
 
-router = APIRouter()
+    async def run_telephony_info_reader(self, ubee_url):
+        print("Running Telephony Info Reader")
+        try:
+            async with async_playwright() as p:
+                browser = await p.chromium.launch(headless=True)
+                page = await browser.new_page()
+                await page.goto(f"{ubee_url}/UbeeTelStatus.asp")
 
-class LoginInfo(BaseModel):
-    username: str
-    password: str
-    url: str
+                # Reading telephony information
+                dhcp_status = await page.text_content("table:nth-child(2) tr:nth-child(2) > td:nth-child(2)")
+                print(f"DHCP Status read: {dhcp_status}")
+                telephony_provisioning = await page.text_content("#ID_LABEL_MTAPROV_INPROGRESS")
+                print(f"Telephony Provisioning read: {telephony_provisioning}")
+                registered_with_call_server = await page.text_content("tr:nth-child(6) > td:nth-child(2)")
+                print(f"Registered with Call Server status read: {registered_with_call_server}")
+                port1_status = await page.text_content("table:nth-child(3) tr:nth-child(2) > td:nth-child(2)")
+                print(f"Port 1 Status read: {port1_status}")
+                port2_status = await page.text_content("table:nth-child(3) tr:nth-child(3) > td:nth-child(2)")
+                print(f"Port 2 Status read: {port2_status}")
 
-async def run_playwright(username: str, password: str, url: str):
-    try:
-        async with async_playwright() as p:
-            browser = await p.webkit.launch(headless=True)
-            page = await browser.new_page()
-            await page.goto(url)
+                await browser.close()
 
-            # Check if device was reseted
-            await page.goto(url)
-            if await page.locator("input[name=\"c_UserId\"]").is_visible():
-                print("Filling the first form")
-                await page.locator("input[name=\"c_UserId\"]").fill(username)
-                await page.locator("input[name=\"c_Password\"]").fill(password)
-                await page.locator("input[name=\"c_PasswordReEnter\"]").fill(password)
-                await page.locator("button:has-text(\"Apply\")").click()  
-                
-            print("Filling the main login form")
-            await page.locator("input[name=\"loginUsername\"]").fill(username)
-            await page.locator("input[name=\"loginPassword\"]").fill(password)
-            await page.locator("input[name=\"loginPassword\"]").press("Enter")  # Or click on the login button if there is one
-
-            # Navigate to the system info page
-            await page.goto(f"{url}/UbeeSysInfo.asp")
-            # Fetch system info
-
-            # model = await page.text_content('table:nth-child(1) tr:nth-child(3) > td:nth-child(2)')
-            hardware_version = await page.text_content('table:nth-child(1) tr:nth-child(4) > td:nth-child(2)')
-            firmware_version = await page.text_content('tr:nth-child(5) > td:nth-child(2)')
-            boot_version = await page.text_content('tr:nth-child(6) > td:nth-child(2)')
-            serial_number = await page.text_content('tr:nth-child(7) > td:nth-child(2)')
-            mac_address = await page.text_content('tr:nth-child(8) > td:nth-child(2)')
-            network_access = await page.text_content('table:nth-child(4) tr:nth-child(3) > td:nth-child(2)')
-
+                return {
+                    "dhcp_status": dhcp_status,
+                    "telephony_provisioning": telephony_provisioning,
+                    "registered_with_call_server": registered_with_call_server,
+                    "port1_status": port1_status,
+                    "port2_status": port2_status
+                }
+        finally:
             await browser.close()
-            return {
-                # "model": model,
-                "hardware_version": hardware_version,
-                "firmware_version": firmware_version,
-                "boot_version": boot_version,
-                "serial_number": serial_number,
-                "mac_address": mac_address,
-                "network_access": network_access
-            }
 
-    except Exception as e:
-        logging.error(f"An error occurred: {e}")
+    except LoginError as e:
         return {"error": str(e)}
-
-@router.post("/run_system_info_reader/")
-async def run_system_info_reader(login_info: LoginInfo):
-    return await run_playwright(login_info.username, login_info.password, login_info.url)
+    except Exception as e:
+        return {"error": "An unexpected error occurred."}

@@ -6,7 +6,11 @@ services:
     build: .
     volumes:
       - /home/ubuntu/docker/playwright-fastapi/apps:/apps
+    networks:
+      - oci_mon_network
     ports:
-      - "5000:5000"
-      - "28000:8000"
-    restart: unless-stopped
+      - "5555:5555"
+ #   restart: unless-stopped
+networks:
+  oci_mon_network:
+    external: true

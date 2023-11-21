@@ -1,14 +1,16 @@
 FROM mcr.microsoft.com/playwright/python:v1.39.0-jammy
 
 # Install FastAPI and Uvicorn
-RUN pip install fastapi uvicorn playwright
+RUN pip install fastapi uvicorn playwright pytest pytest-asyncio pytest-mock aider-chat
 
 # Set the working directory
 WORKDIR /apps
 
-# Expose the port the app runs on
-EXPOSE 5000
+# Copy your server script into the container
+COPY apps/server.py .
 
-# Command to run the FastAPI app
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "5000", "--reload"]
+# Expose the port the XMLRPC server runs on (adjust if your port is different)
+EXPOSE 5555
 
+# Command to run your XMLRPC server script
+CMD ["python", "server.py"]

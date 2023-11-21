@@ -1,6 +1,0 @@
-from fastapi import FastAPI
-from ubee_evw_system_info_reader import router as system_info_router
-
-app = FastAPI()
-
-app.include_router(system_info_router)
