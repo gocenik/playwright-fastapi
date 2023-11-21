@@ -1,149 +1,123 @@
-# test_server.py
-import pytest
-from server import DeviceInfoServer, ActionType
-from playwright.async_api import ElementHandleError
 import logging
+from xmlrpc.server import SimpleXMLRPCServer
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
+import playwright
+import playwright.async_api as async_playwright
+from enum import Enum
 
-@pytest.fixture(scope='module')
-async def server():
-    server = DeviceInfoServer('localhost', 8000)
-    await server.run()  # Ensure this aligns with your actual server's start method
-    yield server
-    
-    
+class ActionType(Enum):
+    FETCH_TEXT = 1
+    CLICK_BUTTON = 2
+    INPUT_TEXT = 3
 
-@pytest.mark.asyncio
-async def test_start_server(server):
-    server.run_server()
-    # Assert that the server is running and listening on the specified port
-    assert server.server.is_serving()
-    
-    
-@pytest.mark.asyncio
-async def test_handle_web_action_with_fix(server, mocker):
-    mocker.patch.object(DeviceInfoServer, 'perform_web_action', autospec=True)
-    # Mock the perform_web_action method
-    mocker.patch.object(DeviceInfoServer, 'perform_web_action')
-    # Call the handle_web_action method
-    result = server.handle_web_action('http://192.168.0.1', 'FETCH_TEXT', {'selector': 'h1'})
-    # Assert that the perform_web_action method was called with the correct arguments
-    DeviceInfoServer.perform_web_action.assert_called_once_with('http://192.168.0.1', ActionType.FETCH_TEXT, {'selector': 'h1'})
-# The server should be able to fetch text from a web page
+    def __init__(self, host, port):
+        self.server = SimpleXMLRPCServer(("0.0.0.0", port))
+        self.server.register_function(self.handle_web_action)
+        self.server.register_function(self.login_to_ubee_sync)
+        self.executor = ThreadPoolExecutor(max_workers=4)
+        # ...
 
-@pytest.mark.asyncio
-async def test_fetch_text_with_fix(server, mocker):
-    mocker.patch.object(DeviceInfoServer, 'fetch_text', return_value={'text': 'Example Text'}, autospec=True)
-    # Test logic for fetch_text
-    ...
+    def login_to_ubee_sync(self, username, password, url):
+        # Synchronous wrapper for the async login_to_ubee method
+        return asyncio.run(self.login_to_ubee(username, password, url))
 
-@pytest.mark.asyncio
-async def test_form_not_visible_fixed(server, mocker):
-    mocker.patch.object(DeviceInfoServer, 'perform_web_action', side_effect=ElementHandleError, autospec=True)
-    # Test logic for form not visible case
-    ...
 
-@pytest.mark.asyncio
-async def test_login_to_ubee_error(server, mocker):
-    mocker.patch.object(DeviceInfoServer, 'perform_web_action', side_effect=Exception('Error in login_to_ubee'), autospec=True)
-    # Test logic for login error
-    ...
+    async def login_to_ubee(self, username, password, url):
+        browser = await self.get_browser()
+        page = await browser.new_page()
+        await page.goto(url)
 
-# Add more tests as needed    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
+        # Check if device was reseted
+        try:
+            await page.locator("input[name=\"c_UserId\"]").fill(username)
+            await page.locator("input[name=\"c_Password\"]").fill(password)
+            await page.locator("input[name=\"c_PasswordReEnter\"]").fill(password)
+            await page.locator("button:has-text(\"Apply\")").click()  
+        except playwright.ElementHandleError:
+            logging.info("Form is not visible")
+            raise Exception("Form is not visible")
+        except Exception as e:
+            logging.error(f"Error in login_to_ubee: {e}")
+            raise Exception("Error in login_to_ubee")
 
-@pytest.fixture
-async def server():
-    return DeviceInfoServer('localhost', 8000)
+        logging.info("Filling the main login form")
+        await page.locator("input[name=\"loginUsername\"]").fill(username)
+        await page.locator("input[name=\"loginPassword\"]").fill(password)
+        await page.locator("input[name=\"loginPassword\"]").press("Enter") 
 
-# The server should start and listen on the specified port
-@pytest.fixture(scope='module')
-def server():
+        def login_to_ubee_sync(self, username, password, url):
+            # Synchronous wrapper for the async login_to_ubee method
+            return asyncio.run(self.login_to_ubee(username, password, url))
+
+        return page
+
+    def handle_web_action(self, url, action, params):
+        # Wrapper function to run async task in the executor
+        action_type = ActionType[action]
+        future = asyncio.run_coroutine_threadsafe(
+            self.perform_web_action(url, action_type, params), 
+            asyncio.get_event_loop()
+        )
+        return future.result()
+
+    def run_server(self):
+        # Function to start the XMLRPC server
+        self.server.serve_forever()
+
+    async def perform_web_action(self, url, action: ActionType, params):
+        try:
+            async with async_playwright() as p:
+                browser = await p.chromium.launch(headless=True)
+                page = await browser.new_page()
+                await page.goto(url, timeout=5000)
+
+                if action == ActionType.FETCH_TEXT:
+                    selector = params.get('selector')
+                    result = await self.fetch_text(page, selector)
+                elif action == ActionType.CLICK_BUTTON:
+                    selector = params.get('selector')
+                    result = await self.click_button(page, selector)
+                elif action == ActionType.INPUT_TEXT:
+                    selector = params.get('selector')
+                    text = params.get('text')
+                    result = await self.input_text(page, selector, text)
+                # Add more actions as needed
+                # ...
+
+                await page.close()
+                return {'action': action.value, 'result': result}
+
+
+
+        except playwright.ElementHandleError:
+            logging.info("Form is not visible")
+        except Exception as e:
+            logging.error(f"Error in perform_web_action: {e}")
+            return {'error': str(e)}
+
+    async def run(self):
+        await self.perform_web_action()
+
+
+    async def fetch_text(self, page, selector):
+        text = await page.text_content(selector)
+        return {'text': text}
+
+    async def click_button(self, page, selector):
+        await page.click(selector, timeout=3000)
+        return {'status': 'clicked'}
+
+    async def input_text(self, page, selector, text):
+        await page.fill(selector, text, timeout=3000)
+        return {'status': 'text input'}
+
+
+# Run the server
+if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
-    server = DeviceInfoServer('localhost', 8000)
-    return server
+    server = DeviceInfoServer('localhost', 5555)
+    loop = asyncio.get_event_loop()
+    loop.run_in_executor(None, server.run_server)
+    loop.run_forever()
 
-@pytest.mark.asyncio
-async def test_start_server(server):
-    server.run_server()
-    # Assert that the server is running and listening on the specified port
-    assert server.server.is_serving()
-# The server should be able to handle requests to perform web actions with the recommended fix
-
-@pytest.fixture(scope='module')
-def server(self):
-    logging.basicConfig(level=logging.INFO)
-    server = DeviceInfoServer('localhost', 8000)
-    return server
-
-@pytest.mark.asyncio
-async def test_handle_web_action_with_fix(self, server, mocker):
-    # Mock the perform_web_action method
-    mocker.patch.object(DeviceInfoServer, 'perform_web_action')
-    # Call the handle_web_action method
-    result = server.handle_web_action('http://192.168.0.1', 'FETCH_TEXT', {'selector': 'h1'})
-    # Assert that the perform_web_action method was called with the correct arguments
-    DeviceInfoServer.perform_web_action.assert_called_once_with('http://192.168.0.1', ActionType.FETCH_TEXT, {'selector': 'h1'})
-# The server should be able to fetch text from a web page
-
-@pytest.mark.asyncio
-async def test_fetch_text_with_fix(server, mocker):
-    # Mock the fetch_text method
-    mocker.patch.object(DeviceInfoServer, 'fetch_text')
-    DeviceInfoServer.fetch_text.return_value = {'text': 'Example Text'}
-    # Call the perform_web_action method with FETCH_TEXT action
-    result = await server.perform_web_action('http://192.168.0.1', ActionType.FETCH_TEXT, {'selector': 'h1'})
-    # Assert the result
-    assert result == {'action': ActionType.FETCH_TEXT.value, 'result': {'text': 'Example Text'}}
-# The server should handle cases where the form is not visible
-
-@pytest.fixture(scope='module')
-def server(self, mocker: Callable[..., Generator[MockerFixture, None, None]]):
-    logging.basicConfig(level=logging.INFO)
-    server = DeviceInfoServer('localhost', 8000)
-    return server
-
-@pytest.mark.asyncio
-async def test_form_not_visible_fixed(self, server, mocker):
-    # Mock the perform_web_action method to raise ElementHandleError
-    mocker.patch.object(DeviceInfoServer, 'perform_web_action')
-    DeviceInfoServer.perform_web_action.side_effect = playwright.ElementHandleError
-    # Call the perform_web_action method with FETCH_TEXT action
-    result = await server.perform_web_action('http://192.168.0.1', ActionType.FETCH_TEXT, {'selector': 'h1'})
-    # Assert the result
-    assert result == {'error': 'Form is not visible'}
-# The server should handle cases where there is an error in login_to_ubee
-@pytest.fixture(scope='module')
-def server():
-    logging.basicConfig(level=logging.INFO)
-    server = DeviceInfoServer('localhost', 8000)
-    return server
-
-@pytest.mark.asyncio
-async def test_login_to_ubee_error(server, mocker):
-    # Mock the perform_web_action method to raise an exception
-    mocker.patch.object(DeviceInfoServer, 'perform_web_action')
-    DeviceInfoServer.perform_web_action.side_effect = Exception('Error in login_to_ubee')
-    # Call the perform_web_action method with FETCH_TEXT action
-    result = await server.perform_web_action('http://192.168.0.1', ActionType.FETCH_TEXT, {'selector': 'h1'})
-    # Assert the result
-    assert result == {'error': 'Error in login_to_ubee'}
-# The server should handle cases where there is an ElementHandleError in perform_web_action
-@pytest.mark.asyncio
-async def test_login_to_ubee_error(server, mocker):
-    # Mock the perform_web_action method to raise an exception
-    mocker.patch.object(DeviceInfoServer, 'perform_web_action')
-    DeviceInfoServer.perform_web_action.side_effect = Exception('Error in perform_web_action')
-    # Call the perform_web_action method with FETCH_TEXT action
-    result = await server.perform_web_action('http://192.168.0.1', ActionType.FETCH_TEXT, {'selector': 'h1'})
-    # Assert the result
-    assert result == {'error': 'Error in perform_web_action'}
-        
